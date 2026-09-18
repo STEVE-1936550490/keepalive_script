@@ -37,6 +37,7 @@ mode=="hosts" {
         next
     }
     action=field["action"]
+    if(field["duration"] ~ /^[0-9]+$/) duration[name]=field["duration"]
     if(field["selected_ip"]!="" && kind[name]=="remote" && at>=connectionAt[name]) {
         connectionAt[name]=at; connection[name]="ok"
     }
@@ -67,7 +68,7 @@ END {
     for(k=1;k<=count;k++) {
         name=order[k]; if(k>1) printf ","
         state=(!running ? (enabled[name]?"stopped":"disabled") : (phase[name]!=""?phase[name]:(enabled[name]?"waiting":"disabled")))
-        printf "{\"name\":%s,\"type\":%s,\"ip\":%s,\"enabled\":%s,\"phase\":%s,\"connection\":%s,\"connection_at\":%s,\"cpu\":%s,\"cpu_at\":%s,\"disk_mb\":%s,\"disk_at\":%s,\"last_action\":%s,\"last_at\":%s,\"next_at\":%d,\"cpu_history\":[",q(name),q(kind[name]),q(ip[name]),enabled[name]?"true":"false",q(state),q(connection[name]!=""?connection[name]:"unknown"),q(connectionAt[name]),num(cpu[name]),q(cpuAt[name]),num(disk[name]),q(diskAt[name]),q(lastAction[name]),q(lastAt[name]),nextAt[name]
+        printf "{\"name\":%s,\"type\":%s,\"ip\":%s,\"enabled\":%s,\"phase\":%s,\"connection\":%s,\"connection_at\":%s,\"cpu\":%s,\"cpu_at\":%s,\"disk_mb\":%s,\"disk_at\":%s,\"last_action\":%s,\"last_at\":%s,\"next_at\":%d,\"duration_sec\":%s,\"cpu_history\":[",q(name),q(kind[name]),q(ip[name]),enabled[name]?"true":"false",q(state),q(connection[name]!=""?connection[name]:"unknown"),q(connectionAt[name]),num(cpu[name]),q(cpuAt[name]),num(disk[name]),q(diskAt[name]),q(lastAction[name]),q(lastAt[name]),nextAt[name],num(duration[name])
         first=samples[name]-59; if(first<1) first=1
         for(j=first;j<=samples[name];j++) {if(j>first) printf ","; printf "%s",sample[name,j]}
         printf "]}"

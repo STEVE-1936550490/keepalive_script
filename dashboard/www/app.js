@@ -37,9 +37,14 @@ function render() {
         const points = samples.map((v, i) => `${samples.length === 1 ? 160 : (i / (samples.length - 1)) * 320},${52 - Math.min(100, Math.max(0, v)) * .5}`).join(' ');
         $('.cpu-line', card).setAttribute('points', points);
         setText('.sample-time', h.cpu_at ? `采样于 ${h.cpu_at} · 虚线为 70% 参考线` : '暂无活跃采样', card);
+        const duration = document.createElement('div');
+        duration.className = 'duration-line';
+        duration.textContent = Number.isFinite(h.duration_sec) ? `最近计划时长 · ${Math.floor(h.duration_sec / 60)} 分 ${h.duration_sec % 60} 秒` : '最近计划时长 · —';
+        $('.sample-time', card).after(duration);
         setText('.disk-value', h.disk_mb === null ? '—' : `${h.disk_mb} MiB`, card);
         $('.disk-value', card).title = h.disk_at || '';
         setText('.next-value', c.running && h.next_at ? localTime(h.next_at) : '—', card);
+        setText('.next-label', '最早计划 · 串行等待', card);
         cards.append(card);
     }
     $('#hosts').replaceChildren(cards);

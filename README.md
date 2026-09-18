@@ -1,6 +1,6 @@
 # 多主机 keepalive
 
-Bash 5+ / Linux。每台主机在有限时间内制造温和 CPU 和磁盘活动，不保证云服务商因此保留实例。默认目标整机 CPU 70%，每次 10 分钟。无需 Python、Node 或常驻远程 agent。
+Bash 5+ / Linux。每台主机在有限时间内制造温和 CPU 和磁盘活动，不保证云服务商因此保留实例。默认目标整机 CPU 70%，单次时长以 60 分钟为中心、在 45–75 分钟内随机。无需 Python、Node 或常驻远程 agent。
 
 ## 快速开始
 
@@ -54,16 +54,17 @@ CLOUD02_PASSWORD='your-password'
 |---|---:|---|
 | TARGET_CPU | 70 | 整机 CPU 目标百分比 |
 | MAX_CPU | 80 | 采样达到此值暂停自身 CPU 负载，不允许大于 80 |
-| ACTIVE_DURATION_MIN | 10 | 每台每次持续分钟 |
+| ACTIVE_DURATION_MIN | 60 | 每台每次持续时长的中心分钟 |
+| ACTIVE_DURATION_SPREAD_MIN | 15 | 时长随机范围为中心 ± 此值；0 表示固定时长 |
 | INTERVAL_MEAN_MIN | 120 | 本轮起点之后的调度中心分钟 |
 | INTERVAL_SPREAD_MIN | 35 | 调度中心两侧范围 |
 | MIN_FREE_MB | 1024 | 写入后需保留的最小空间 |
 | WORK_DIR | /tmp/keepalive_io | 专用临时目录，不要填写业务目录 |
 | LOG_MAX_BYTES | 10485760 | 主日志轮转阈值 |
 
-`ACTIVE_DURATION_SEC=30 ./keepalive.sh run --once` 或 `--duration 30` 覆盖持续时间。`KEEPALIVE_CONFIG_DIR=/absolute/path` 可换配置目录。settings.env 中显式值优先于同名环境变量。
+每台主机每轮独立抽取时长：将 6 个 `$RANDOM` 的平均值映射到中心 ± spread，形成有界、近似正态的中心分布，以秒为单位，多数值集中在 60 分钟附近。`ACTIVE_DURATION_SEC=30 ./keepalive.sh run --once` 或 `--duration 30` 明确固定持续时间，不再随机，CLI 优先。`KEEPALIVE_CONFIG_DIR=/absolute/path` 可换配置目录。settings.env 中显式值优先于同名环境变量。
 
-正式调度将 `[mean-spread, mean+spread]` 划分为 N 个时间槽，每槽以 6 个 `$RANDOM` 平均生成中心偏向的随机时间，时间有序且互不相同，再随机轮换主机分配。所有 offset 相对于本轮起点；主机串行执行，若前一台未结束则下一台延迟。每台执行一次后开启下一轮。**120 分钟是轮内 offset 的中心，不是单台两次启动的固定周期**；实际重复间隔还包含上一轮等待和执行时间。
+正式调度将 `[mean-spread, mean+spread]` 划分为 N 个时间槽，每槽以 6 个 `$RANDOM` 平均生成中心偏向的随机时间，时间有序且互不相同。每轮使用 Fisher–Yates 完全打乱主机顺序，保持每台恰好执行一次。所有 offset 相对于本轮起点；主机串行执行，若前一台未结束则下一台延迟。每台执行一次后开启下一轮。**120 分钟是轮内 offset 的中心，不是单台两次启动的固定周期**；实际重复间隔还包含上一轮等待和执行时间。当前 9 台机器、单次平均 60 分钟的串行模式，一轮约 10 小时；页面上的计划时间是最早可启动时间，实际还需等待前一台结束。
 
 ## 负载与清理
 
@@ -93,6 +94,7 @@ sudo systemctl stop keepalive.service
 bash -n keepalive.sh worker.sh scripts/install-systemd.sh
 bash tests/smoke.sh
 bash tests/schedule.sh
+bash tests/randomization.sh
 bash tests/lifecycle.sh
 bash tests/guards.sh
 # 仅在已安装时：

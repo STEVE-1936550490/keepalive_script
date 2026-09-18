@@ -8,7 +8,7 @@ mkdir -p "$fixture/config" "$fixture/run" "$fixture/logs"
 printf 'local|local|||||local|||1\ncloud|remote|root||192.0.2.1|22|password|SECRET||0\n' > "$fixture/config/hosts.conf"
 printf 'echo SHOULD_NEVER_EXECUTE\nSECRET=SHOULD_NEVER_EXPOSE\n' > "$fixture/config/secrets.env"
 cat > "$fixture/logs/keepalive.log" <<'LOG'
-2026-09-18 10:00:00 [INFO] round=1 host=cloud action=start run_id=sample
+2026-09-18 10:00:00 [INFO] round=1 host=cloud action=start run_id=sample duration=3600
 2026-09-18 10:00:03 [INFO] round=1 host=cloud action=cpu cpu=69 target=70 duty=70
 2026-09-18 10:00:04 [INFO] round=1 host=cloud action=disk disk_write_mb=64
 2026-09-18 10:00:30 [INFO] round=1 host=cloud action=finish rc=0 run_id=sample
@@ -16,7 +16,7 @@ LOG
 printf '2026-09-18 10:00:00 [FAIL] host=cloud reason=timeout\n' > "$fixture/logs/connectivity-1.log"
 printf '2026-09-18 11:00:00 [PASS] host=cloud ssh_login=ok\n' > "$fixture/logs/connectivity-2.log"
 KEEPALIVE_STATE_ROOT="$fixture" scripts/dashboard-state.sh > "$fixture/state.json"
-jq -e '.controller.running == false and (.hosts|length)==2 and (.hosts[]|select(.name=="cloud")|.connection=="ok" and .cpu==69 and .disk_mb==64 and .enabled==false and .phase=="disabled")' "$fixture/state.json" >/dev/null
+jq -e '.controller.running == false and (.hosts|length)==2 and (.hosts[]|select(.name=="cloud")|.connection=="ok" and .cpu==69 and .disk_mb==64 and .duration_sec==3600 and .enabled==false and .phase=="disabled")' "$fixture/state.json" >/dev/null
 ! grep -q SHOULD_NEVER "$fixture/state.json"
 # A matching live process birth time is required; stale PID files must not report running.
 read -r statline < /proc/$$/stat

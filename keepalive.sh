@@ -13,10 +13,12 @@ if [[ -f $CONFIG_DIR/secrets.env ]]; then
 fi
 set +x
 TARGET_CPU=${TARGET_CPU:-70}; MAX_CPU=${MAX_CPU:-80}; MIN_FREE_MB=${MIN_FREE_MB:-1024}
-WORK_DIR=${WORK_DIR:-/tmp/keepalive_io}; ACTIVE_DURATION_MIN=${ACTIVE_DURATION_MIN:-10}
+WORK_DIR=${WORK_DIR:-/tmp/keepalive_io}; ACTIVE_DURATION_MIN=${ACTIVE_DURATION_MIN:-60}
+ACTIVE_DURATION_SPREAD_MIN=${ACTIVE_DURATION_SPREAD_MIN:-15}
 INTERVAL_MEAN_MIN=${INTERVAL_MEAN_MIN:-120}; INTERVAL_SPREAD_MIN=${INTERVAL_SPREAD_MIN:-35}
 LOG_MAX_BYTES=${LOG_MAX_BYTES:-10485760}
-DURATION=${ACTIVE_DURATION_SEC:-$((ACTIVE_DURATION_MIN*60))}
+DURATION=${ACTIVE_DURATION_SEC:-}; DURATION_FIXED=0
+[[ -z $DURATION ]] || DURATION_FIXED=1
 ONCE=0; DRY=0; FILTER=; ROUND=0; ACTIVE_PID=; LOGGER_PID=; WAIT_PID=; REMOTE_ACTIVE=0; FIFO=
 PIDFILE=$BASE/run/keepalive.pid
 usage() { echo 'Usage: ./keepalive.sh {start|stop|restart|status|run} [--once] [--duration SEC] [--host NAME] [--dry-run]'; }
@@ -69,11 +71,15 @@ while (($#)); do
     case $1 in
         --once) ONCE=1; shift;;
         --dry-run) DRY=1; shift;;
-        --duration) DURATION=${2:?}; shift 2;;
+        --duration) DURATION=${2:?}; DURATION_FIXED=1; shift 2;;
         --host) FILTER=${2:?}; shift 2;;
         *) die 'reason=invalid_option';;
     esac
 done
+[[ $ACTIVE_DURATION_MIN =~ ^[1-9][0-9]{0,7}$ ]] || die 'reason=invalid_active_duration'
+[[ $ACTIVE_DURATION_SPREAD_MIN =~ ^(0|[1-9][0-9]{0,7})$ ]] || die 'reason=invalid_duration_spread'
+((ACTIVE_DURATION_SPREAD_MIN < ACTIVE_DURATION_MIN)) || die 'reason=invalid_duration_spread'
+((DURATION_FIXED)) || DURATION=$((ACTIVE_DURATION_MIN*60))
 for value in "$DURATION" "$TARGET_CPU" "$MAX_CPU" "$MIN_FREE_MB" "$INTERVAL_MEAN_MIN" "$LOG_MAX_BYTES"; do
     [[ $value =~ ^[1-9][0-9]{0,7}$ ]] || die 'reason=invalid_numeric_setting'
 done
@@ -188,7 +194,7 @@ activate() {
 normalish_random() { local sum=0; for ((j=0;j<6;j++)); do sum=$((sum+RANDOM)); done; NORMAL=$((sum/6)); }
 failures=0
 while :; do
-    ROUND=$((ROUND+1)); round_start=$SECONDS; count=${#ROWS[@]}; offsets=()
+    ROUND=$((ROUND+1)); round_start=$SECONDS; count=${#ROWS[@]}; offsets=(); durations=()
     # Stratified slots with central jitter: guaranteed separation, no fixed 90/125/160.
     for ((i=0;i<count;i++)); do
         normalish_random
@@ -197,16 +203,26 @@ while :; do
         else offset=$(((INTERVAL_MEAN_MIN-INTERVAL_SPREAD_MIN)*60 + (2*INTERVAL_SPREAD_MIN*60*(i*32768+NORMAL))/(count*32768) + i)); fi
         ((ONCE == 0 || i != 0)) || offset=0
         offsets+=("$offset")
+        if ((DURATION_FIXED)); then durations+=("$DURATION")
+        else
+            normalish_random
+            durations+=("$(((ACTIVE_DURATION_MIN-ACTIVE_DURATION_SPREAD_MIN)*60 + 2*ACTIVE_DURATION_SPREAD_MIN*60*NORMAL/32768))")
+        fi
     done
-    # Rotate assignment randomly, preserving sorted times and one activation per host.
-    first=$((RANDOM%count))
+    # Fisher-Yates shuffle: every permutation is possible, with one activation per host.
+    host_order=("${ROWS[@]}")
+    for ((i=count-1;i>0;i--)); do
+        pick=$((RANDOM%(i+1))); swap=${host_order[i]}
+        host_order[i]=${host_order[pick]}; host_order[pick]=$swap
+    done
     for ((i=0;i<count;i++)); do
-        IFS='|' read -r NAME TYPE USER_NAME PRIVATE_IP PUBLIC_IP PORT AUTH PASSWORD_ENV KEY_FILE ENABLED <<< "${ROWS[(i+first)%count]}"
-        delay=${offsets[i]}
+        IFS='|' read -r NAME TYPE USER_NAME PRIVATE_IP PUBLIC_IP PORT AUTH PASSWORD_ENV KEY_FILE ENABLED <<< "${host_order[i]}"
+        delay=${offsets[i]}; DURATION=${durations[i]}
         log INFO "host=$NAME next_delay=$((delay/60))m offset_sec=$delay duration=$DURATION target=$TARGET_CPU max_cpu=$MAX_CPU dry_run=$DRY"
     done
     for ((i=0;i<count;i++)); do
-        IFS='|' read -r NAME TYPE USER_NAME PRIVATE_IP PUBLIC_IP PORT AUTH PASSWORD_ENV KEY_FILE ENABLED <<< "${ROWS[(i+first)%count]}"
+        IFS='|' read -r NAME TYPE USER_NAME PRIVATE_IP PUBLIC_IP PORT AUTH PASSWORD_ENV KEY_FILE ENABLED <<< "${host_order[i]}"
+        DURATION=${durations[i]}
         delay=$((round_start+offsets[i]-SECONDS))
         if ((DRY == 0 && delay > 0)); then sleep "$delay" 9>&- & WAIT_PID=$!; wait "$WAIT_PID"; WAIT_PID=; fi
         if [[ $TYPE == remote ]]; then
