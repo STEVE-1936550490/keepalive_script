@@ -1,4 +1,7 @@
 config/secrets.env
+config/dashboard.httpd.conf
+config/dashboard.auth*
+config/dashboard.password
 config/hosts.conf
 logs/
 run/

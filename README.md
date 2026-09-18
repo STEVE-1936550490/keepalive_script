@@ -120,3 +120,60 @@ git push
 gh auth login
 gh repo create keepalive_script --private --source=. --remote=origin --push
 ```
+
+## Dashboard：3000 端口监控
+
+使用本机已有的 BusyBox httpd + Bash CGI，不需要 Python/Node 或 npm 包。Dashboard 与 keepalive 独立运行，网页只读，不会因打开页面而启动负载或 SSH 探测。
+
+```bash
+./dashboard.sh start
+./dashboard.sh status
+./dashboard.sh stop
+./dashboard.sh restart
+```
+
+默认监听 `0.0.0.0:3000`，浏览器打开 `http://主控服务器IP:3000`。首次启动自动生成独立访问密码，只有一个密码输入框，无需用户名：
+
+```bash
+# 仅在本机查看首次生成的 Dashboard 密码：
+cat config/dashboard.password
+# 交互式修改密码，不会回显，旧登录立即失效：
+./dashboard.sh password
+```
+
+首次密码文件、密码哈希、会话均为私有文件并排除 Git。修改密码后删除首次密码文件；实际校验使用 `config/dashboard.auth` 中的 SHA-512 crypt 哈希。登录有效期 8 小时，Cookie 使用 HttpOnly / SameSite=Strict，每个来源 IP 在 5 分钟内连续失败 10 次后限制登录。该页面不使用任何服务器 SSH 密码，也不读取 secrets.env。
+
+服务本身使用 HTTP；若跨公网访问，需在反向代理上配置 HTTPS，或使用 SSH 隧道以加密密码及会话传输。只开放给本机可执行：
+
+```bash
+DASHBOARD_BIND=127.0.0.1 ./dashboard.sh restart
+# 在自己的电脑执行（替换主控服务器地址）：
+ssh -N -L 3000:127.0.0.1:3000 root@主控服务器IP
+# 然后打开 http://127.0.0.1:3000
+```
+
+直接从其他设备访问时，需要云安全组/防火墙允许你的来源地址访问 TCP 3000；脚本不会自动修改防火墙。也可用 `DASHBOARD_PORT=3001` 换端口。nohup 启动后退出终端仍运行，但不会自动配置开机启动。
+
+当前服务器已使用独立的 `keepalive-dashboard.service` 托管监控页，以避免执行会话结束时回收后台进程，并支持开机启动。请用 systemctl 管理此服务：
+
+```bash
+sudo systemctl status keepalive-dashboard.service
+sudo systemctl restart keepalive-dashboard.service
+sudo systemctl stop keepalive-dashboard.service
+# 在其他服务器安装：
+sudo ./scripts/install-dashboard-systemd.sh
+sudo systemctl start keepalive-dashboard.service
+```
+
+systemd 模式下修改地址/端口请使用 `systemctl edit keepalive-dashboard.service` 设置 `[Service]` 的 `Environment=DASHBOARD_BIND=127.0.0.1` 等参数，然后重启服务。不要与 `dashboard.sh start` 同时使用。该服务只启动监控页，不会启动 keepalive 调度。
+
+页面每 5 秒刷新主控 PID 与启动标识、启用状态、最近连接检查时间、当前轮次活跃状态、计划执行时间、最近 CPU 曲线、磁盘活动及事件。明确区分“最近登录成功”和“实时在线”，CPU 数据为最近活跃采样而非持续监控。远程主机尚未启用时显示“未启用”，Dashboard 不会替你启用它们。日志轮转或裁剪后，仅保留可读取的历史；断网时页面标记数据过期。
+
+Dashboard 验证（测试使用已安装的 jq/curl；它们不是网页服务的运行依赖）：
+
+```bash
+bash tests/dashboard.sh
+bash tests/dashboard-auth.sh
+# HTTP 启停测试需 Dashboard 处于停止状态，使用临时端口 13000：
+bash tests/dashboard-http.sh
+```
