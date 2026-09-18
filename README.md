@@ -184,4 +184,8 @@ bash tests/dashboard.sh
 bash tests/dashboard-auth.sh
 # HTTP 测试使用隔离目录和临时端口 13000，不停止正式 Dashboard：
 bash tests/dashboard-http.sh
+# 可选：仅当已有 Node 时验证浏览器兼容性；服务运行不依赖 Node：
+node tests/dashboard-browser.cjs
+# Dashboard 已运行时：模拟代理保持连接，验证 JSON 响应有明确长度：
+node tests/dashboard-framing.cjs
 ```

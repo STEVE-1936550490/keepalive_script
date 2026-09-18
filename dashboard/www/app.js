@@ -1,7 +1,7 @@
 'use strict';
 let state = null;
 let filter = 'all';
-let busy = false;
+let refreshPromise = null;
 let locked = false;
 let sessionGeneration = 0;
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -10,6 +10,22 @@ const connections = { ok: '最近登录成功', timeout: '连接超时', authent
 const actions = { start: '开始活跃', cpu: 'CPU 采样', disk: '磁盘读写', finish: '活跃结束', cpu_pause: 'CPU 保护暂停', disk_skip: '跳过磁盘写入', schedule: '生成调度', activation_failed: '活跃失败', skip: '跳过主机', error: '运行异常', cancel: '取消任务' };
 function localTime(seconds) { return new Date(seconds * 1000).toLocaleString('zh-CN', { hour12: false }); }
 function setText(selector, value, root = document) { $(selector, root).textContent = value; }
+async function fetchWithTimeout(url, options = {}, milliseconds = 8000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), milliseconds);
+    try {
+        const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', ...options, signal: controller.signal });
+        const data = await response.json();
+        return { ok: response.ok, status: response.status, data };
+    }
+    finally { clearTimeout(timer); }
+}
+function requestError(error) {
+    if (error.name === 'AbortError') return '请求超时，请检查网络后重试。';
+    if (/^HTTP \d{3}$/.test(error.message)) return `服务返回 ${error.message}，请稍后重试。`;
+    if (error instanceof TypeError) return '请求失败，请检查网络、浏览器代理或兼容性后重试。';
+    return '页面读取失败，请按 Ctrl+F5 刷新后重试。';
+}
 function render() {
     const c = state.controller;
     setText('#controller-state', c.running ? '运行中' : '已停止');
@@ -58,43 +74,62 @@ function render() {
     if (!state.events.length) { const tr = document.createElement('tr'); const td = document.createElement('td'); td.colSpan = 4; td.className = 'empty'; td.textContent = '暂无活跃记录，启动 keepalive 后将显示在这里。'; tr.append(td); rows.append(tr); }
     $('#events').replaceChildren(rows);
 }
-async function refresh() {
-    if (busy) return;
-    busy = true;
+function refresh(options = {}) {
+    if (refreshPromise) return options.afterLogin ? refreshPromise.then(() => refresh(options)) : refreshPromise;
+    refreshPromise = loadState(options).finally(() => { refreshPromise = null; });
+    return refreshPromise;
+}
+async function loadState(options) {
     const generation = sessionGeneration;
+    let stage = 'request';
     try {
-        const response = await fetch('/cgi-bin/state.sh', { cache: 'no-store', signal: AbortSignal.timeout(8000) });
-        if (response.status === 401) { showLogin(); return; }
+        const response = await fetchWithTimeout('/cgi-bin/state.sh', { cache: 'no-store' });
+        if (generation !== sessionGeneration) return false;
+        if (response.status === 401) {
+            const detail = response.data;
+            const message = options.afterLogin
+                ? (detail.reason === 'missing_cookie' ? '密码验证后未收到登录 Cookie。请允许此网站使用 Cookie，并直接在浏览器标签页中打开。' : '登录会话未生效，请刷新页面后重试。')
+                : (state ? '登录会话已失效，请重新输入密码。' : '');
+            showLogin(message); return false;
+        }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const next = await response.json();
+        const next = response.data;
         if (generation !== sessionGeneration) return;
         if (!Array.isArray(next.hosts) || !next.controller) throw new Error('Invalid state');
+        stage = 'render';
         state = next; locked = false; render();
         $('#login-screen').hidden = true; $('#dashboard-screen').hidden = false;
         $('#error').hidden = true; $('#refresh-dot').className = 'dot green'; setText('#refresh-status', '状态已更新');
-    } catch (_) {
+        return true;
+    } catch (error) {
+        const message = stage === 'render' ? `页面显示失败：${error.message}` : requestError(error);
         $('#error').hidden = false; $('#refresh-dot').className = 'dot red'; setText('#refresh-status', '刷新失败 · 数据可能过期');
-        if (!state) setText('#login-message', '服务暂时无法访问，请稍后重试。');
-    } finally { busy = false; }
+        setText('#error', `${message} 当前数据可能已过期。`);
+        if (!$('#login-screen').hidden) setText('#login-message', message);
+        return false;
+    }
 }
-function showLogin() {
+function showLogin(message = '') {
     sessionGeneration++;
     locked = true; state = null;
     $('#dashboard-screen').hidden = true; $('#login-screen').hidden = false;
     $('#hosts').replaceChildren(); $('#events').replaceChildren();
     $('#password').value = '';
+    setText('#login-message', message);
 }
 $('#login-form').addEventListener('submit', async event => {
     event.preventDefault(); $('#login-submit').disabled = true; setText('#login-message', '');
+    sessionGeneration++;
     try {
-        const response = await fetch('/cgi-bin/login.sh', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: $('#password').value, signal: AbortSignal.timeout(10000) });
+        const response = await fetchWithTimeout('/cgi-bin/login.sh', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: $('#password').value }, 10000);
         if (!response.ok) { setText('#login-message', response.status === 429 ? '尝试次数过多，请 5 分钟后重试。' : response.status === 401 ? '密码不正确，请重试。' : '登录服务暂时不可用。'); return; }
-        $('#password').value = ''; locked = false; await refresh();
-    } catch (_) { setText('#login-message', '无法连接服务，请稍后重试。'); }
+        if (!response.data || response.data.ok !== true) throw new Error('Invalid login response');
+        $('#password').value = ''; locked = false; await refresh({ afterLogin: true });
+    } catch (error) { setText('#login-message', requestError(error)); }
     finally { $('#login-submit').disabled = false; }
 });
 $('#logout').addEventListener('click', async () => {
-    try { const response = await fetch('/cgi-bin/logout.sh', { method: 'POST', signal: AbortSignal.timeout(8000) }); if (!response.ok && response.status !== 401) throw new Error(); showLogin(); }
+    try { const response = await fetchWithTimeout('/cgi-bin/logout.sh', { method: 'POST' }); if (!response.ok && response.status !== 401) throw new Error(); showLogin(); }
     catch (_) { $('#error').hidden = false; setText('#error', '退出失败，请重试。'); }
 });
 $('#refresh').addEventListener('click', refresh);
