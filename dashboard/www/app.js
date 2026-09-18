@@ -60,7 +60,7 @@ function render() {
         setText('.disk-value', h.disk_mb === null ? '—' : `${h.disk_mb} MiB`, card);
         $('.disk-value', card).title = h.disk_at || '';
         setText('.next-value', c.running && h.next_at ? localTime(h.next_at) : '—', card);
-        setText('.next-label', '最早计划 · 串行等待', card);
+        setText('.next-label', '预计计划 · 串行执行', card);
         cards.append(card);
     }
     $('#hosts').replaceChildren(cards);

@@ -17,7 +17,7 @@ chmod 600 config/secrets.env
 ./keepalive.sh restart
 ```
 
-`--once` 是快速测试模式：第一台立即执行，后续主机随机错开几秒，按顺序运行且不会重叠；不等待两小时。常驻 `run` / `start` 才采用正式分钟调度。`run --dry-run` 可查看正式调度；`run --once --dry-run` 查看测试调度。dry-run 不运行 worker、不产生 CPU/磁盘测试负载，但会做 SSH 连通性探测并写日志。只需 30 秒测试时务必加 `--once`。
+`--once` 是快速测试模式：第一台立即执行，后续主机随机错开几秒，按顺序运行且不会重叠；不等待两小时。常驻 `run` / `start` 在每次进程启动后立即执行第一轮，后续轮次采用原有分钟调度。`run --dry-run` 查看启动首轮计划；`run --once --dry-run` 查看测试调度。dry-run 不运行 worker、不产生 CPU/磁盘测试负载，但会做 SSH 连通性探测并写日志。只需 30 秒测试时务必加 `--once`。
 
 ## 主机和密码
 
@@ -64,7 +64,9 @@ CLOUD02_PASSWORD='your-password'
 
 每台主机每轮独立抽取时长：将 6 个 `$RANDOM` 的平均值映射到中心 ± spread，形成有界、近似正态的中心分布，以秒为单位，多数值集中在 60 分钟附近。`ACTIVE_DURATION_SEC=30 ./keepalive.sh run --once` 或 `--duration 30` 明确固定持续时间，不再随机，CLI 优先。`KEEPALIVE_CONFIG_DIR=/absolute/path` 可换配置目录。settings.env 中显式值优先于同名环境变量。
 
-正式调度将 `[mean-spread, mean+spread]` 划分为 N 个时间槽，每槽以 6 个 `$RANDOM` 平均生成中心偏向的随机时间，时间有序且互不相同。每轮使用 Fisher–Yates 完全打乱主机顺序，保持每台恰好执行一次。所有 offset 相对于本轮起点；主机串行执行，若前一台未结束则下一台延迟。每台执行一次后开启下一轮。**120 分钟是轮内 offset 的中心，不是单台两次启动的固定周期**；实际重复间隔还包含上一轮等待和执行时间。当前 9 台机器、单次平均 60 分钟的串行模式，一轮约 10 小时；页面上的计划时间是最早可启动时间，实际还需等待前一台结束。
+每次进程启动或重启，先随机生成整轮主机顺序和各台时长，然后立即执行第一台。首轮始终串行，上一台结束或跳过后便执行下一台，不插入调度等待；日志和页面按前面各台预计时长累计显示计划时间，实际会随连接开销、提前结束或失败跳过而变化。对已经运行的服务再次执行 `start` 不会重置调度。
+
+从第二轮开始，沿用原有规则：将 `[mean-spread, mean+spread]` 划分为 N 个时间槽，每槽以 6 个 `$RANDOM` 平均生成中心偏向的随机时间，时间有序且互不相同。每轮使用 Fisher–Yates 完全打乱主机顺序，保持每台恰好执行一次。所有 offset 相对于本轮起点；主机串行执行，若前一台未结束则下一台延迟。每台执行一次后开启下一轮并等待其计划时间。**120 分钟是轮内 offset 的中心，不是单台两次启动的固定周期**；实际重复间隔还包含上一轮等待和执行时间。当前 9 台机器、单次平均 60 分钟，首轮约 9 小时，之后一轮约 10 小时。页面时间为计划估计，实际还需等待前一台结束。
 
 ## 负载与清理
 
@@ -87,7 +89,7 @@ sudo ./scripts/install-systemd.sh
 ./keepalive.sh restart
 ```
 
-安装器同时安装 keepalive 和 Dashboard 两个服务，配置开机联动启动，不立即启动负载。安装后，`keepalive.sh` 和 `dashboard.sh` 的 `start/stop/restart/status` 都统一管理两个服务，并等待两者完成启停；status 分别显示两者状态。关闭 SSH 终端不会停止它们。停止后 3000 端口也关闭，重启会重新生成本轮调度。
+安装器同时安装 keepalive 和 Dashboard 两个服务，配置开机联动启动，不立即启动负载。安装后，`keepalive.sh` 和 `dashboard.sh` 的 `start/stop/restart/status` 都统一管理两个服务，并等待两者完成启停；status 分别显示两者状态。关闭 SSH 终端不会停止它们。停止后 3000 端口也关闭，启动或重启会重新生成首轮调度并立即开始活跃。
 
 `keepalive.service` 启动时拉起 Dashboard，Dashboard 的 `PartOf` 依赖传播主控停止和重启；两者各自异常时由 systemd 重启。默认以 root 运行；若改 User，需同时更改安装目录、日志、密钥等权限。systemd 模式下启动参数从配置文件读取，`start --once` 等参数会被拒绝；临时测试仍使用 `run --once --duration 30`，需先停止已有主控以释放锁。未安装本目录的 systemd 服务时，两个脚本保留各自独立的 nohup 启停模式。
 
@@ -101,7 +103,7 @@ bash tests/randomization.sh
 bash tests/lifecycle.sh
 bash tests/service-control.sh
 bash tests/guards.sh
-# 已安装 systemd 时的联动测试：会短暂启停服务并重置调度；活跃任务存在时跳过。
+# 已安装 systemd 时的联动测试：会启停服务、触发首轮负载并重置调度；活跃任务存在时跳过。
 sudo bash tests/systemd-lifecycle.sh
 # 仅在已安装时：
 command -v shellcheck >/dev/null && shellcheck *.sh scripts/*.sh

@@ -19,7 +19,12 @@ sleep 5
 grep -q 'host=local action=finish rc=143' logs/keepalive.log
 ! grep -q 'reason=worker_failure' logs/keepalive.log
 # Stop during a long scheduler wait must also release the flock.
-./keepalive.sh start
+./keepalive.sh start --duration 1
+for ((i=0;i<100;i++)); do
+    grep -q 'round=2 .*offset_sec=' logs/keepalive.log && break
+    sleep 0.1
+done
+grep -q 'round=2 .*offset_sec=' logs/keepalive.log
 ./keepalive.sh stop
 ./keepalive.sh run --once --dry-run >/dev/null
 echo 'PASS: start, duplicate start, stop during activity/wait, cleanup and lock release'

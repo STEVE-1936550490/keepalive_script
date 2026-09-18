@@ -202,6 +202,7 @@ normalish_random() { local sum=0; for ((j=0;j<6;j++)); do sum=$((sum+RANDOM)); d
 failures=0
 while :; do
     ROUND=$((ROUND+1)); round_start=$SECONDS; count=${#ROWS[@]}; offsets=(); durations=()
+    STARTUP_ROUND=$((ROUND == 1 && ONCE == 0))
     # Stratified slots with central jitter: guaranteed separation, no fixed 90/125/160.
     for ((i=0;i<count;i++)); do
         normalish_random
@@ -216,6 +217,15 @@ while :; do
             durations+=("$(((ACTIVE_DURATION_MIN-ACTIVE_DURATION_SPREAD_MIN)*60 + 2*ACTIVE_DURATION_SPREAD_MIN*60*NORMAL/32768))")
         fi
     done
+    if ((STARTUP_ROUND)); then
+        # Display estimates for serial execution; the first round never sleeps
+        # between hosts, even when an earlier host fails or finishes early.
+        offset=0
+        for ((i=0;i<count;i++)); do
+            offsets[i]=$offset
+            offset=$((offset+durations[i]))
+        done
+    fi
     # Fisher-Yates shuffle: every permutation is possible, with one activation per host.
     host_order=("${ROWS[@]}")
     for ((i=count-1;i>0;i--)); do
@@ -231,7 +241,7 @@ while :; do
         IFS='|' read -r NAME TYPE USER_NAME PRIVATE_IP PUBLIC_IP PORT AUTH PASSWORD_ENV KEY_FILE ENABLED <<< "${host_order[i]}"
         DURATION=${durations[i]}
         delay=$((round_start+offsets[i]-SECONDS))
-        if ((DRY == 0 && delay > 0)); then sleep "$delay" 9>&- & WAIT_PID=$!; wait "$WAIT_PID"; WAIT_PID=; fi
+        if ((DRY == 0 && STARTUP_ROUND == 0 && delay > 0)); then sleep "$delay" 9>&- & WAIT_PID=$!; wait "$WAIT_PID"; WAIT_PID=; fi
         if [[ $TYPE == remote ]]; then
             if ! prepare_ssh; then failures=$((failures+1)); continue; fi
         else log INFO "host=$NAME selected_ip=local"; fi
