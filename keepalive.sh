@@ -3,6 +3,13 @@ set -Eeuo pipefail
 set +x
 umask 077
 BASE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if [[ -f $BASE/scripts/systemd-control.sh ]]; then
+    source "$BASE/scripts/systemd-control.sh"
+    case ${1:-help} in
+        start|stop|restart|status)
+            if managed_service_installed; then managed_service_command "$@"; exit; fi;;
+    esac
+fi
 CONFIG_DIR=${KEEPALIVE_CONFIG_DIR:-$BASE/config}
 mkdir -p "$BASE/run" "$BASE/logs"
 # These are trusted local Bash files, never printed or passed as command arguments.

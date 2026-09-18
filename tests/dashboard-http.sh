@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Run only when the production dashboard is stopped; this test owns its process.
-[[ $(./dashboard.sh status) == STOPPED ]] || { echo 'SKIP: dashboard already running'; exit 0; }
-export DASHBOARD_PORT=13000
 fixture=$(mktemp -d)
+cp dashboard.sh "$fixture/"
+cp -r dashboard scripts "$fixture/"
+mkdir "$fixture/config"
+printf 'local|local|||||local|||1\n' > "$fixture/config/hosts.conf"
+cd "$fixture"
+export DASHBOARD_PORT=13000 DASHBOARD_BIND=127.0.0.1
 export KEEPALIVE_AUTH_ROOT=$fixture
 trap './dashboard.sh stop >/dev/null 2>&1 || true; rm -rf -- "$fixture"' EXIT
 printf 'test-dashboard-password-123\n' | scripts/dashboard-password.sh --stdin >/dev/null

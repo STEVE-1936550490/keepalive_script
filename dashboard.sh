@@ -2,6 +2,13 @@
 set -euo pipefail
 umask 077
 BASE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if [[ -f $BASE/scripts/systemd-control.sh ]]; then
+    source "$BASE/scripts/systemd-control.sh"
+    case ${1:-status} in
+        start|stop|restart|status)
+            if managed_service_installed; then managed_service_command "${1:-status}" "${@:2}"; exit; fi;;
+    esac
+fi
 PIDFILE=$BASE/run/dashboard.pid
 mkdir -p "$BASE/run" "$BASE/logs"
 identity() { local line; read -r line < "/proc/$1/stat" || return 1; line=${line##*) }; local parts; read -ra parts <<< "$line"; [[ ${parts[0]} != Z ]] || return 1; printf '%s' "${parts[19]}"; }

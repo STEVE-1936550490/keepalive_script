@@ -81,12 +81,15 @@ CPU 用 `/proc/stat`（不重复统计 guest），`nproc` 个 Bash busy/sleep �
 ```bash
 ./keepalive.sh stop
 sudo ./scripts/install-systemd.sh
-sudo systemctl start keepalive.service
-sudo systemctl status keepalive.service
-sudo systemctl stop keepalive.service
+./keepalive.sh start
+./keepalive.sh status
+./keepalive.sh stop
+./keepalive.sh restart
 ```
 
-安装器只安装并 enable，不立即启动负载。默认以 root 运行；若改 User，需同时更改安装目录、日志、密钥等权限。使用 systemd 时由 systemctl 管理启停，避免与 nohup 混用。
+安装器同时安装 keepalive 和 Dashboard 两个服务，配置开机联动启动，不立即启动负载。安装后，`keepalive.sh` 和 `dashboard.sh` 的 `start/stop/restart/status` 都统一管理两个服务，并等待两者完成启停；status 分别显示两者状态。关闭 SSH 终端不会停止它们。停止后 3000 端口也关闭，重启会重新生成本轮调度。
+
+`keepalive.service` 启动时拉起 Dashboard，Dashboard 的 `PartOf` 依赖传播主控停止和重启；两者各自异常时由 systemd 重启。默认以 root 运行；若改 User，需同时更改安装目录、日志、密钥等权限。systemd 模式下启动参数从配置文件读取，`start --once` 等参数会被拒绝；临时测试仍使用 `run --once --duration 30`，需先停止已有主控以释放锁。未安装本目录的 systemd 服务时，两个脚本保留各自独立的 nohup 启停模式。
 
 ## 验证
 
@@ -96,7 +99,10 @@ bash tests/smoke.sh
 bash tests/schedule.sh
 bash tests/randomization.sh
 bash tests/lifecycle.sh
+bash tests/service-control.sh
 bash tests/guards.sh
+# 已安装 systemd 时的联动测试：会短暂启停服务并重置调度；活跃任务存在时跳过。
+sudo bash tests/systemd-lifecycle.sh
 # 仅在已安装时：
 command -v shellcheck >/dev/null && shellcheck *.sh scripts/*.sh
 ./keepalive.sh run --once --dry-run
@@ -125,7 +131,7 @@ gh repo create keepalive_script --private --source=. --remote=origin --push
 
 ## Dashboard：3000 端口监控
 
-使用本机已有的 BusyBox httpd + Bash CGI，不需要 Python/Node 或 npm 包。Dashboard 与 keepalive 独立运行，网页只读，不会因打开页面而启动负载或 SSH 探测。
+使用本机已有的 BusyBox httpd + Bash CGI，不需要 Python/Node 或 npm 包。网页只读，不会因打开页面而启动负载或 SSH 探测。安装上述 systemd 服务后，Dashboard 与 keepalive 一起启停：
 
 ```bash
 ./dashboard.sh start
@@ -156,20 +162,18 @@ ssh -N -L 3000:127.0.0.1:3000 root@主控服务器IP
 # 然后打开 http://127.0.0.1:3000
 ```
 
-直接从其他设备访问时，需要云安全组/防火墙允许你的来源地址访问 TCP 3000；脚本不会自动修改防火墙。也可用 `DASHBOARD_PORT=3001` 换端口。nohup 启动后退出终端仍运行，但不会自动配置开机启动。
+直接从其他设备访问时，需要云安全组/防火墙允许你的来源地址访问 TCP 3000；脚本不会自动修改防火墙。上述环境变量启动方式仅适用于未安装 systemd 的 nohup 模式，该模式不会自动配置开机启动。
 
-当前服务器已使用独立的 `keepalive-dashboard.service` 托管监控页，以避免执行会话结束时回收后台进程，并支持开机启动。请用 systemctl 管理此服务：
+当前服务器使用联动的 systemd 服务托管调度和监控页，推荐通过 `./keepalive.sh` 统一管理。也可查看详细服务状态：
 
 ```bash
 sudo systemctl status keepalive-dashboard.service
-sudo systemctl restart keepalive-dashboard.service
-sudo systemctl stop keepalive-dashboard.service
-# 在其他服务器安装：
+# 在其他服务器安装（兼容入口，也会安装两个服务）：
 sudo ./scripts/install-dashboard-systemd.sh
-sudo systemctl start keepalive-dashboard.service
+./keepalive.sh start
 ```
 
-systemd 模式下修改地址/端口请使用 `systemctl edit keepalive-dashboard.service` 设置 `[Service]` 的 `Environment=DASHBOARD_BIND=127.0.0.1` 等参数，然后重启服务。不要与 `dashboard.sh start` 同时使用。该服务只启动监控页，不会启动 keepalive 调度。
+systemd 模式下修改地址/端口请使用 `systemctl edit keepalive-dashboard.service` 设置 `[Service]` 的 `Environment=DASHBOARD_BIND=127.0.0.1` 或 `Environment=DASHBOARD_PORT=3001`，然后执行 `./keepalive.sh restart`。命令行环境变量不会自动传入 systemd 服务。
 
 页面每 5 秒刷新主控 PID 与启动标识、启用状态、最近连接检查时间、当前轮次活跃状态、计划执行时间、最近 CPU 曲线、磁盘活动及事件。明确区分“最近登录成功”和“实时在线”，CPU 数据为最近活跃采样而非持续监控。远程主机尚未启用时显示“未启用”，Dashboard 不会替你启用它们。日志轮转或裁剪后，仅保留可读取的历史；断网时页面标记数据过期。
 
@@ -178,6 +182,6 @@ Dashboard 验证（测试使用已安装的 jq/curl；它们不是网页服务�
 ```bash
 bash tests/dashboard.sh
 bash tests/dashboard-auth.sh
-# HTTP 启停测试需 Dashboard 处于停止状态，使用临时端口 13000：
+# HTTP 测试使用隔离目录和临时端口 13000，不停止正式 Dashboard：
 bash tests/dashboard-http.sh
 ```

@@ -25,7 +25,10 @@ done
 CPU_PIDS=(); DISK_PID=; TIMER_PID=; WAIT_PID=; TASK_DIR=; CONTROL_DIR=
 cleanup() {
     local rc=$?
-    trap - EXIT INT TERM HUP ERR
+    trap - EXIT ERR
+    # timeout can signal the process group while we are already cleaning up.
+    # A repeated TERM must not interrupt child reaping or temporary-file removal.
+    trap '' INT TERM HUP
     for pid in "${CPU_PIDS[@]}" "$DISK_PID" "$TIMER_PID" "$WAIT_PID"; do
         [[ -n $pid ]] && kill -TERM "$pid" 2>/dev/null || true
     done
@@ -49,7 +52,7 @@ TASK_DIR=$(mktemp -d "$WORK_DIR/task.XXXXXXXX")
 printf '0\n' > "$TASK_DIR/duty"
 # Explicit hard deadline also protects direct worker invocations and disconnected SSH.
 owner=$BASHPID
-( child=; trap '[[ -z $child ]] || kill "$child" 2>/dev/null; exit 0' TERM INT; sleep "$((DURATION + 10))" & child=$!; wait "$child"; kill -TERM "$owner" 2>/dev/null ) & TIMER_PID=$!
+( child=; trap '[[ -z $child ]] || kill "$child" 2>/dev/null || :; exit 0' TERM INT HUP; sleep "$((DURATION + 10))" & child=$!; wait "$child"; kill -TERM "$owner" 2>/dev/null ) & TIMER_PID=$!
 nap() { sleep "$1" & WAIT_PID=$!; wait "$WAIT_PID"; WAIT_PID=; }
 snapshot() {
     local label u n s idle io irq soft steal guest guestnice rest
@@ -58,7 +61,7 @@ snapshot() {
 }
 cpu_loop() {
     local sleeper= duty now until_us cycle_end rest_us delay
-    trap '[[ -z $sleeper ]] || kill "$sleeper" 2>/dev/null; exit 0' TERM INT HUP
+    trap '[[ -z $sleeper ]] || kill "$sleeper" 2>/dev/null || :; exit 0' TERM INT HUP
     # Phase offsets prevent every core entering the busy part simultaneously.
     printf -v delay '0.%03d' "$((RANDOM % 200))"
     sleep "$delay" & sleeper=$!; wait "$sleeper" || :; sleeper=
