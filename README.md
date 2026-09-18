@@ -141,6 +141,8 @@ cat config/dashboard.password
 ./dashboard.sh password
 ```
 
+自定义密码支持 1–256 个字符，纯字母、纯数字或混合均可，不要求至少 12 位或包含特殊字符；只拒绝空密码及超长输入。
+
 首次密码文件、密码哈希、会话均为私有文件并排除 Git。修改密码后删除首次密码文件；实际校验使用 `config/dashboard.auth` 中的 SHA-512 crypt 哈希。登录有效期 8 小时，Cookie 使用 HttpOnly / SameSite=Strict，每个来源 IP 在 5 分钟内连续失败 10 次后限制登录。该页面不使用任何服务器 SSH 密码，也不读取 secrets.env。
 
 服务本身使用 HTTP；若跨公网访问，需在反向代理上配置 HTTPS，或使用 SSH 隧道以加密密码及会话传输。只开放给本机可执行：

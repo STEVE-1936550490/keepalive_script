@@ -25,3 +25,12 @@ response=$(printf '%s' "$password" | REQUEST_METHOD=POST CONTENT_LENGTH=${#passw
 [[ $(stat -c %a "$fixture/config/dashboard.auth") == 600 ]]
 ! grep -q "$password" "$fixture/config/dashboard.auth"
 echo 'PASS: anonymous/wrong-password rejection, login cookie, logout, throttling and hash storage'
+for short_password in a 7 abc 123456 a1; do
+    printf '%s\n' "$short_password" | scripts/dashboard-password.sh --stdin >/dev/null
+    response=$(printf '%s' "$short_password" | REQUEST_METHOD=POST CONTENT_LENGTH=${#short_password} REMOTE_ADDR=127.0.0.1 dashboard/www/cgi-bin/login.sh)
+    [[ $response == *'"ok":true'* ]] || { echo 'FAIL: short password login rejected'; exit 1; }
+done
+if printf '\n' | scripts/dashboard-password.sh --stdin >/dev/null 2>&1; then
+    echo 'FAIL: empty password accepted'; exit 1
+fi
+echo 'PASS: short alphabetic, numeric and mixed passwords; empty password rejected'
